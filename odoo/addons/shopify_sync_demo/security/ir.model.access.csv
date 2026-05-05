@@ -1,0 +1,11 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_shopify_sync_instance_user,shopify.sync.instance.user,model_shopify_sync_instance,base.group_user,1,1,1,0
+access_shopify_sync_instance_admin,shopify.sync.instance.admin,model_shopify_sync_instance,base.group_system,1,1,1,1
+access_shopify_sync_product_mapping_user,shopify.sync.product.mapping.user,model_shopify_sync_product_mapping,base.group_user,1,1,1,0
+access_shopify_sync_product_mapping_admin,shopify.sync.product.mapping.admin,model_shopify_sync_product_mapping,base.group_system,1,1,1,1
+access_shopify_sync_order_user,shopify.sync.order.user,model_shopify_sync_order,base.group_user,1,1,1,0
+access_shopify_sync_order_admin,shopify.sync.order.admin,model_shopify_sync_order,base.group_system,1,1,1,1
+access_shopify_sync_order_line_user,shopify.sync.order.line.user,model_shopify_sync_order_line,base.group_user,1,1,1,0
+access_shopify_sync_order_line_admin,shopify.sync.order.line.admin,model_shopify_sync_order_line,base.group_system,1,1,1,1
+access_shopify_sync_event_user,shopify.sync.event.user,model_shopify_sync_event,base.group_user,1,0,0,0
+access_shopify_sync_event_admin,shopify.sync.event.admin,model_shopify_sync_event,base.group_system,1,1,1,1
