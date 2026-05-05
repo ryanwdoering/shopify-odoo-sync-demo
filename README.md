@@ -144,7 +144,7 @@ In **Shopify Sync**, open the sync instance and run:
 1. **Test Connection**
 2. **Reset Demo Data** for a clean local walkthrough, or **Seed Demo Data** to
    restore the canonical products
-3. **Refresh Odoo Catalog**
+3. **Refresh Inventory Catalog**
 
 Seed products:
 

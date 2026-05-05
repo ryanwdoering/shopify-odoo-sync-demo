@@ -39,7 +39,7 @@ class TestShopifySyncDemo(TransactionCase):
                 "access_token": "test-token",
             }
         )
-        cls.stock_location = cls.env["stock.location"].search([("usage", "=", "internal")], limit=1)
+        cls.stock_location = cls.instance._demo_stock_location()
 
     def _product(self, sku="TEST-SKU", name="Test Product", price=10.0, quantity=5.0, sale_ok=True):
         """Create a stockable product and apply a deterministic on-hand quantity."""
@@ -217,9 +217,12 @@ class TestShopifySyncDemo(TransactionCase):
         self.assertEqual(set(products.mapped("default_code")), expected_skus)
         for item in DEFAULT_DEMO_PRODUCTS:
             product = products.filtered(lambda product: product.default_code == item["sku"])
+            variant = self.env["product.product"].search([("product_tmpl_id", "=", product.id)], limit=1)
             self.assertEqual(product.name, item["name"])
             self.assertEqual(product.list_price, item["price"])
-            self.assertEqual(product.product_variant_id.qty_available, item["quantity"])
+            self.assertTrue(variant)
+            self.assertTrue(variant.active)
+            self.assertEqual(variant.qty_available, item["quantity"])
 
         unrelated.invalidate_recordset()
         self.assertFalse(unrelated.active)
@@ -254,6 +257,10 @@ class TestShopifySyncDemo(TransactionCase):
             ),
             expected_skus,
         )
+        for item in DEFAULT_DEMO_PRODUCTS:
+            variant = self.env["product.product"].search([("default_code", "=", item["sku"])], limit=1)
+            self.assertTrue(variant)
+            self.assertEqual(variant.qty_available, item["quantity"])
         self.assertTrue(
             self.env["shopify.sync.event"].search(
                 [
@@ -276,6 +283,34 @@ class TestShopifySyncDemo(TransactionCase):
         )
         self.assertEqual(mapping.product_template_id, product)
         self.assertEqual(mapping.product_variant_id, product.product_variant_id)
+
+    def test_refresh_catalog_uses_inventory_products_and_removes_stale_rows(self):
+        """Shopify Sync catalog should mirror active stockable Inventory app SKUs."""
+        inventory_product = self._product(sku="INV-CATALOG-SKU", name="Inventory Catalog Product")
+        service_product = self.env["product.template"].create(
+            {
+                "name": "Service With SKU",
+                "default_code": "SERVICE-SKU",
+                "list_price": 99.0,
+                "sale_ok": True,
+                "purchase_ok": False,
+                "is_storable": False,
+            }
+        )
+        stale_product = self._product(sku="STALE-CATALOG-SKU", name="Stale Catalog Product")
+        stale_mapping = self.instance._ensure_mapping(stale_product)
+        stale_product.write({"active": False})
+
+        self.instance.action_refresh_catalog()
+
+        mapped_skus = set(
+            self.env["shopify.sync.product.mapping"]
+            .search([("instance_id", "=", self.instance.id)])
+            .mapped("sku")
+        )
+        self.assertIn(inventory_product.default_code, mapped_skus)
+        self.assertNotIn(service_product.default_code, mapped_skus)
+        self.assertFalse(stale_mapping.exists())
 
     def test_product_publish_calls_product_set_and_stores_shopify_ids(self):
         """Publish Products should upsert Shopify catalog data and persist returned Shopify IDs."""
@@ -423,11 +458,12 @@ class TestShopifySyncDemo(TransactionCase):
 
     def test_failed_validation_submits_shopify_refund_without_restocking(self):
         """Rejected Shopify orders should be canceled/refunded through Shopify immediately."""
-        self._product(sku="REFUND-SKU", quantity=1.0)
+        product = self._product(sku="REFUND-SKU", quantity=1.0)
         order = self.env["shopify.sync.order"].create_or_update_from_shopify(
             self.instance,
             self._shopify_order("REFUND-SKU", quantity=2.0, price=10.0),
         )
+        free_before = product.product_variant_id.free_qty
         captured_variables = []
 
         def fake_graphql(record, query, variables=None):
@@ -446,6 +482,9 @@ class TestShopifySyncDemo(TransactionCase):
         self.assertEqual(refund_variables["refundMethod"], {"originalPaymentMethodsRefund": True})
         self.assertEqual(refund_variables["reason"], "INVENTORY")
         self.assertFalse(refund_variables["restock"])
+        self.assertFalse(order.sale_order_id)
+        product.product_variant_id.invalidate_recordset()
+        self.assertEqual(product.product_variant_id.free_qty, free_before)
 
     def test_valid_order_creates_sale_order_with_shopify_salesperson(self):
         """Accepted Shopify orders should become Odoo quotations owned by the Shopify user."""
@@ -520,6 +559,70 @@ class TestShopifySyncDemo(TransactionCase):
         self.assertGreaterEqual(confirmed_count, 1)
         self.assertEqual(order.sale_order_id.state, "sale")
         self.assertEqual(order.status, "confirmed")
+
+    def test_cron_does_not_confirm_unvalidated_direct_shopify_quotations(self):
+        """Inventory should not reserve for Shopify-origin sale orders outside validation."""
+        product = self._product(sku="DIRECT-QUOTE-SKU", quantity=5.0, price=11.0)
+        partner = self.env["res.partner"].create({"name": "Direct Buyer"})
+        direct_order = self.env["sale.order"].create(
+            {
+                "partner_id": partner.id,
+                "origin": "Shopify",
+                "client_order_ref": "#DIRECT-UNVALIDATED",
+                "order_line": [
+                    (
+                        0,
+                        0,
+                        {
+                            "product_id": product.product_variant_id.id,
+                            "product_uom_qty": 1.0,
+                            "price_unit": product.list_price,
+                        },
+                    )
+                ],
+            }
+        )
+        free_before = product.product_variant_id.free_qty
+
+        confirmed_count = self.env["shopify.sync.order"]._cron_confirm_new_shopify_quotations()
+
+        product.product_variant_id.invalidate_recordset()
+        direct_order.invalidate_recordset()
+        self.assertEqual(confirmed_count, 0)
+        self.assertEqual(direct_order.state, "draft")
+        self.assertEqual(product.product_variant_id.free_qty, free_before)
+
+    def test_unvalidated_shopify_sale_order_cannot_mark_paid_or_publish_inventory(self):
+        """Paid-order automation must require a validated Shopify Sync order link."""
+        product = self._product(sku="DIRECT-PAID-SKU", quantity=5.0, price=13.0)
+        partner = self.env["res.partner"].create({"name": "Direct Paid Buyer"})
+        direct_order = self.env["sale.order"].create(
+            {
+                "partner_id": partner.id,
+                "origin": "Shopify",
+                "client_order_ref": "#DIRECT-PAID",
+                "order_line": [
+                    (
+                        0,
+                        0,
+                        {
+                            "product_id": product.product_variant_id.id,
+                            "product_uom_qty": 1.0,
+                            "price_unit": product.list_price,
+                        },
+                    )
+                ],
+            }
+        )
+        free_before = product.product_variant_id.free_qty
+
+        with self.assertRaises(UserError):
+            direct_order.action_shopify_mark_paid()
+
+        product.product_variant_id.invalidate_recordset()
+        direct_order.invalidate_recordset()
+        self.assertEqual(direct_order.state, "draft")
+        self.assertEqual(product.product_variant_id.free_qty, free_before)
 
     def test_paid_shopify_order_creates_posted_paid_odoo_invoice(self):
         """If Shopify reports paid, Odoo should confirm the sale and register payment."""

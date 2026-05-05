@@ -121,14 +121,19 @@ class ShopifySyncInstance(models.Model):
         return self._display_notification(_("Shopify connection succeeded"), "success")
 
     def action_refresh_catalog(self):
-        """Mirror active Odoo SKU-bearing products into native mapping records."""
+        """Mirror the active Odoo Inventory SKU catalog into native mapping records."""
         for instance in self:
-            products = self.env["product.template"].search([("default_code", "!=", False), ("active", "=", True)])
+            products = instance._inventory_catalog_products()
+            all_mappings = self.env["shopify.sync.product.mapping"].with_context(active_test=False).search(
+                [("instance_id", "=", instance.id)]
+            )
+            stale_mappings = all_mappings.filtered(lambda mapping: mapping.product_template_id.id not in products.ids)
+            stale_mappings.unlink()
             for product in products:
                 instance._ensure_mapping(product)
             instance.last_synced_at = fields.Datetime.now()
-            instance._log_event("refresh_catalog", "success", _("Refreshed %s Odoo products") % len(products))
-        return self._display_notification(_("Catalog mappings refreshed"), "success")
+            instance._log_event("refresh_catalog", "success", _("Refreshed %s Inventory products") % len(products))
+        return self._display_notification(_("Inventory catalog mappings refreshed"), "success")
 
     def action_publish_products(self):
         """Publish Odoo product names/SKUs/prices into Shopify productSet."""
@@ -248,7 +253,7 @@ class ShopifySyncInstance(models.Model):
             ["|", ("sku", "=", sku), ("product_template_id", "=", product_template.id), ("instance_id", "=", self.id)],
             limit=1,
         )
-        variant = product_template.product_variant_id or product_template.product_variant_ids[:1]
+        variant = self._product_variant_for_template(product_template)
         values = {
             "instance_id": self.id,
             "sku": sku,
@@ -261,11 +266,63 @@ class ShopifySyncInstance(models.Model):
             mapping = self.env["shopify.sync.product.mapping"].create(values)
         return mapping
 
+    def _inventory_catalog_products(self):
+        """Return the active stock-bearing SKU products visible to the Inventory app.
+
+        Shopify Sync deliberately treats Odoo Inventory as catalog truth. The
+        sync catalog is therefore derived from active `product.product` variants
+        that have SKUs and are configured as stockable goods, then mapped back to
+        their templates for Odoo's product form and Shopify's productSet API.
+        """
+        self.ensure_one()
+        product_model = self.env["product.product"]
+        domain = [
+            ("active", "=", True),
+            ("default_code", "!=", False),
+            ("product_tmpl_id.active", "=", True),
+        ]
+        if "is_storable" in product_model._fields:
+            domain.append(("is_storable", "=", True))
+        elif "type" in product_model._fields:
+            domain.append(("type", "in", ["product", "consu"]))
+        variants = product_model.search(domain)
+        return variants.mapped("product_tmpl_id")
+
+    def _product_variant_for_template(self, product_template):
+        """Return the active concrete variant Odoo uses for stock and order lines.
+
+        Demo resets archive product templates, and Odoo archives their product
+        variants with them. Re-seeding has to reactivate both layers; otherwise
+        the Inventory app shows the template but reports zero on-hand quantity.
+        """
+        self.ensure_one()
+        variant = self.env["product.product"].with_context(active_test=False).search(
+            [("product_tmpl_id", "=", product_template.id)],
+            limit=1,
+        )
+        if not variant and hasattr(product_template, "_create_variant_ids"):
+            product_template._create_variant_ids()
+            variant = self.env["product.product"].with_context(active_test=False).search(
+                [("product_tmpl_id", "=", product_template.id)],
+                limit=1,
+            )
+        if variant and not variant.active:
+            variant.write({"active": True})
+        return variant
+
+    def _demo_stock_location(self):
+        """Prefer the warehouse stock location that Odoo's Inventory screens summarize."""
+        self.ensure_one()
+        warehouse = self.env["stock.warehouse"].search([], limit=1)
+        if warehouse and warehouse.lot_stock_id:
+            return warehouse.lot_stock_id
+        return self.env["stock.location"].search([("usage", "=", "internal")], limit=1)
+
     def _seed_demo_products(self):
         """Upsert the canonical SKU set and apply stock counts through stock.quant."""
         self.ensure_one()
-        internal_location = self.env["stock.location"].search([("usage", "=", "internal")], limit=1)
-        if not internal_location:
+        stock_location = self._demo_stock_location()
+        if not stock_location:
             raise UserError(_("No internal stock location is available for inventory seeding."))
 
         seeded_skus = {item["sku"] for item in DEFAULT_DEMO_PRODUCTS}
@@ -292,7 +349,8 @@ class ShopifySyncInstance(models.Model):
                 product.write(values)
             else:
                 product = self.env["product.template"].create(values)
-            self._set_product_quantity(product.product_variant_id or product.product_variant_ids[:1], internal_location, item["quantity"])
+            variant = self._product_variant_for_template(product)
+            self._set_product_quantity(variant, stock_location, item["quantity"])
 
     def _set_product_quantity(self, product_variant, location, quantity):
         """Apply a physical inventory adjustment for one seeded product variant."""
@@ -367,7 +425,7 @@ class ShopifySyncInstance(models.Model):
         ).create(values)
 
     def _confirm_new_quotations(self):
-        """Confirm Shopify-created quotations without touching hand-entered sales quotes."""
+        """Confirm only Shopify sync orders that have passed Odoo validation."""
         self.ensure_one()
         confirmed_count = 0
         sync_orders = self.order_ids.filtered(
@@ -385,24 +443,6 @@ class ShopifySyncInstance(models.Model):
                 message = str(exc)
                 order.write({"last_error": message, "validation_message": message})
                 self._log_event("confirm_quotation", "failed", "%s confirmation failed: %s" % (order.order_number, message))
-
-        linked_order_ids = sync_orders.mapped("sale_order_id").ids
-        direct_quotations = self.env["sale.order"].search(
-            [
-                ("id", "not in", linked_order_ids),
-                ("origin", "=", "Shopify"),
-                ("state", "in", ["draft", "sent"]),
-            ]
-        )
-        salesperson = self._ensure_shopify_salesperson()
-        for sale_order in direct_quotations:
-            try:
-                sale_order.write({"user_id": salesperson.id})
-                sale_order.action_confirm()
-                confirmed_count += 1
-                self._log_event("confirm_quotation", "success", "%s confirmed as a sales order" % sale_order.name)
-            except Exception as exc:
-                self._log_event("confirm_quotation", "failed", "%s confirmation failed: %s" % (sale_order.name, exc))
         return confirmed_count
 
     def process_order_create_webhook(self, payload, headers=None):
@@ -776,7 +816,7 @@ class ShopifySyncProductMapping(models.Model):
     last_inventory_published_at = fields.Datetime(readonly=True)
     last_error = fields.Text(readonly=True)
     list_price = fields.Float(related="product_template_id.list_price", readonly=True)
-    qty_available = fields.Float(related="product_template_id.qty_available", readonly=True)
+    qty_available = fields.Float(related="product_variant_id.qty_available", readonly=True)
     available_to_sell = fields.Float(related="product_variant_id.free_qty", readonly=True)
     active = fields.Boolean(related="product_template_id.active", readonly=True)
     sale_ok = fields.Boolean(related="product_template_id.sale_ok", readonly=True)
@@ -1256,6 +1296,8 @@ class ShopifySyncOrder(models.Model):
         for order in self:
             if not order.sale_order_id:
                 raise UserError(_("Create the Odoo sale order before fulfillment."))
+            if order.status not in {"published", "confirmed", "paid"}:
+                raise UserError(_("Validate and publish %s before fulfillment can change inventory.") % order.order_number)
             sale_order = order.sale_order_id
             if sale_order.state in {"draft", "sent"}:
                 sale_order.action_confirm()
@@ -1375,12 +1417,24 @@ class SaleOrder(models.Model):
 
     _inherit = "sale.order"
 
+    def _validated_shopify_sync_order(self):
+        """Return the validated sync order that authorizes Shopify stock changes."""
+        self.ensure_one()
+        sync_order = self.env["shopify.sync.order"].search([("sale_order_id", "=", self.id)], limit=1)
+        if not sync_order or sync_order.status not in {"validated", "warning", "published", "confirmed", "paid", "fulfilled"}:
+            raise UserError(
+                _("Shopify order %s must pass the Shopify Sync validation flow before Odoo inventory can change.")
+                % (self.client_order_ref or self.name)
+            )
+        return sync_order
+
     def action_shopify_mark_paid(self):
         """Confirm, invoice, post, and register payment for Shopify-paid orders."""
         results = []
         for sale_order in self:
             if sale_order.origin != "Shopify":
                 raise UserError(_("Only Shopify-origin sales orders can be marked paid by this automation."))
+            sale_order._validated_shopify_sync_order()
             if sale_order.state in {"draft", "sent"}:
                 sale_order.action_confirm()
 
@@ -1430,24 +1484,8 @@ class SaleOrder(models.Model):
     def _shopify_publish_reserved_inventory(self):
         """Push updated Odoo free quantities to Shopify after a paid order reserves stock."""
         for sale_order in self:
-            sync_order = self.env["shopify.sync.order"].search([("sale_order_id", "=", sale_order.id)], limit=1)
-            if sync_order:
-                sync_order._publish_inventory_for_order_lines()
-                continue
-
-            instances = self.env["shopify.sync.instance"].search([("active", "=", True)])
-            for line in sale_order.order_line.filtered("product_id"):
-                for instance in instances:
-                    mapping = self.env["shopify.sync.product.mapping"].search(
-                        [
-                            ("instance_id", "=", instance.id),
-                            ("product_variant_id", "=", line.product_id.id),
-                            ("shopify_inventory_item_gid", "!=", False),
-                        ],
-                        limit=1,
-                    )
-                    if mapping:
-                        mapping.action_publish_inventory()
+            sync_order = sale_order._validated_shopify_sync_order()
+            sync_order._publish_inventory_for_order_lines()
 
 
 class ShopifySyncEvent(models.Model):

@@ -26,7 +26,7 @@
             <form string="Shopify Sync">
                 <header>
                     <button name="action_test_connection" string="Test Connection" type="object" class="btn-secondary"/>
-                    <button name="action_refresh_catalog" string="Refresh Odoo Catalog" type="object" class="btn-secondary"/>
+                    <button name="action_refresh_catalog" string="Refresh Inventory Catalog" type="object" class="btn-secondary"/>
                     <button name="action_publish_products" string="Publish Products" type="object" class="btn-primary"/>
                     <button name="action_publish_inventory" string="Publish Inventory" type="object" class="btn-primary"/>
                     <button name="action_publish_all" string="Publish All" type="object" class="btn-primary"/>

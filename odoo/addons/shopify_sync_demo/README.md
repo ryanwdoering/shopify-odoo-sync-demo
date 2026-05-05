@@ -1,6 +1,6 @@
 # Shopify Sync Demo Odoo Module
 
-Native Odoo module for publishing Odoo catalog and inventory to Shopify,
+Native Odoo module for publishing the Odoo Inventory catalog and stock to Shopify,
 receiving or pulling Shopify orders into Odoo, validating them, and managing the
 accepted order lifecycle inside Odoo.
 
@@ -24,14 +24,14 @@ After installation, open **Shopify Sync** in Odoo.
 Menus:
 
 - **Dashboard**: sync instance, counters, credentials, primary action buttons
-- **Catalog**: Odoo-to-Shopify product mappings
+- **Catalog**: Inventory product to Shopify product/variant/inventory item mappings
 - **Orders**: webhook-ingested or pulled Shopify orders and validation details
 - **Events**: audit trail
 
 ## Catalog Flow
 
-1. Odoo products need an Internal Reference/SKU.
-2. **Refresh Odoo Catalog** creates or updates mapping rows.
+1. Odoo Inventory products need an Internal Reference/SKU and must be active stockable goods.
+2. **Refresh Inventory Catalog** creates or updates mapping rows from active `product.product` Inventory variants.
 3. **Publish Products** writes Odoo name, SKU, price, active state, and inventory
    tracking configuration to Shopify through `productSet`.
 4. **Publish Inventory** writes Odoo available-to-sell stock to Shopify through
@@ -96,12 +96,15 @@ Then click **Register Order Webhook**.
 Shopify Sync: Confirm validated quotations
 ```
 
-It runs every minute and processes only Shopify-owned records:
+It runs every minute and processes only `shopify.sync.order` rows. The
+automation validates new orders first, creates the linked quotation only after
+validation succeeds, and confirms that linked quotation before any Odoo stock
+reservation or Shopify inventory republish can happen.
 
-- `shopify.sync.order` rows in actionable states
-- direct `sale.order` quotations whose `origin` is exactly `Shopify`
-
-The automation assigns salesperson `Shopify` to Shopify-origin orders.
+Direct `sale.order` quotations whose `origin` is `Shopify` are intentionally
+ignored unless they are linked to a validated sync order, so inventory cannot be
+decremented by bypassing the Odoo validation gate. The automation assigns
+salesperson `Shopify` to accepted Shopify orders.
 
 ## Seed Data
 

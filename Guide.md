@@ -1,9 +1,5 @@
 # Technical Demo Guide
 
-Use this as the live walkthrough guide for the current Odoo-only Shopify Sync
-demo.
-
-## Positioning
 
 This is a native Odoo 19 integration module. Odoo is the business system of
 record, and Shopify is the commerce edge that receives published product and
@@ -24,8 +20,7 @@ Current runtime:
 | `odoo` | Odoo 19 web server plus the native `shopify_sync_demo` module |
 | `odoo-db` | Postgres database for Odoo |
 
-There is no FastAPI service, React dashboard, SQLite metadata store, or embedded
-Shopify admin app in the current implementation.
+
 
 ## Architecture
 
@@ -83,7 +78,7 @@ Before presenting:
    - webhook callback URL is set if showing live webhook intake
 5. Run **Test Connection**.
 6. Run **Reset Demo Data** for a clean local walkthrough.
-7. Run **Refresh Odoo Catalog**.
+7. Run **Refresh Inventory Catalog**.
 
 If Shopify webhooks are part of the demo, expose Odoo with a public HTTPS tunnel
 and use this callback shape:
