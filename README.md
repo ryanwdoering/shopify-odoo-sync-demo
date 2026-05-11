@@ -58,6 +58,7 @@ tests/test_static_contracts.py
 docker-compose.yml
 Makefile
 Guide.md
+docs/diagrams.md
 ```
 
 ## Setup
@@ -236,11 +237,27 @@ Shopify Sync: Confirm validated quotations
 It runs every minute and confirms Shopify-owned quotations. If Shopify reported
 the order as paid, it also runs Odoo's invoice/post/payment flow.
 
+## SpecOps Maintenance
+
+This repo is maintained against the active requirements in
+`specs/specops.md`. Requirement IDs are referenced from code and tests so the
+local SpecOps audit can flag missing or stale evidence. Detailed contracts live
+in `specs/shopify-api-contracts.md` and `specs/data-model.md`.
+
+Run:
+
+```bash
+make specops
+```
+
+`make validate` also runs the SpecOps audit before XML and Python syntax checks.
+
 ## Tests
 
 Run the full local verification set:
 
 ```bash
+make specops
 make validate
 make test-static
 make test-odoo
@@ -296,6 +313,7 @@ make test-odoo    # native Odoo TransactionCase tests
 ## More Docs
 
 - [Technical demo guide](Guide.md)
+- [Architecture and workflow diagrams](docs/diagrams.md)
 - [Odoo service notes](odoo/README.md)
 - [Native module notes](odoo/addons/shopify_sync_demo/README.md)
 - [Test suite notes](tests/README.md)

@@ -3,10 +3,16 @@
 These tests intentionally avoid importing Odoo. They validate the module's
 static contract: manifest dependencies, XML wiring, access rules, documentation,
 and the source-level safeguards that make the demo credible in code review.
+
+SpecOps evidence: REQ-ODOO-001, REQ-CATALOG-001, REQ-ORDER-001,
+REQ-REFUND-001, REQ-AUTO-001, REQ-MAINT-001, REQ-SHOPIFYAPI-001,
+REQ-SHOPIFYAPI-002, REQ-SHOPIFYAPI-003, REQ-SHOPIFYAPI-004,
+REQ-DATA-001, REQ-DATA-002, REQ-DATA-003, REQ-DATA-004.
 """
 
 import ast
 import csv
+import tomllib
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -170,3 +176,69 @@ def test_docs_include_job_relevant_talk_track() -> None:
     assert "Odoo customization" in guide
     assert "Shopify/e-commerce automation" in guide
     assert "operational support" in guide.lower()
+
+
+def test_docs_include_maintained_mermaid_diagrams() -> None:
+    """REQ-MAINT-001: architecture diagrams should stay linked and reviewable."""
+    readme = (ROOT / "README.md").read_text()
+    diagrams = (ROOT / "docs" / "diagrams.md").read_text()
+
+    assert "[Architecture and workflow diagrams](docs/diagrams.md)" in readme
+    assert "docs/diagrams.md" in readme
+    assert diagrams.count("```mermaid") >= 5
+    assert "REQ-ODOO-001" in diagrams
+    assert "REQ-CATALOG-001" in diagrams
+    assert "REQ-ORDER-001" in diagrams
+    assert "REQ-REFUND-001" in diagrams
+    assert "REQ-AUTO-001" in diagrams
+    assert "REQ-FULFILL-001" in diagrams
+    assert "REQ-MAINT-001" in diagrams
+
+
+def test_specops_contract_tracks_the_odoo_module() -> None:
+    """REQ-MAINT-001: SpecOps should audit the real Odoo module and active requirements."""
+    config = tomllib.loads((ROOT / "specops.toml").read_text())
+    assert "docs/**/*.md" in config["paths"]["code"]
+    assert "odoo/addons/**/*.py" in config["paths"]["code"]
+    assert "odoo/addons/**/*.xml" in config["paths"]["code"]
+    assert "odoo/addons/**/tests/**/*.py" in config["paths"]["tests"]
+    assert "shopify_sync_demo" in config["components"]
+    assert "repo_operations" in config["components"]
+
+    spec = (ROOT / "specs" / "specops.md").read_text()
+    assert "Replace this starter requirement" not in spec
+    assert spec.count("status: active") >= 7
+    assert "REQ-MAINT-001" in spec
+
+
+def test_specops_api_and_data_model_contracts_are_defined() -> None:
+    """SpecOps should include Shopify API and native Odoo data-model contracts."""
+    api_spec = (ROOT / "specs" / "shopify-api-contracts.md").read_text()
+    data_spec = (ROOT / "specs" / "data-model.md").read_text()
+    model_source = (MODULE / "models" / "shopify_sync.py").read_text()
+
+    for requirement_id in [
+        "REQ-SHOPIFYAPI-001",
+        "REQ-SHOPIFYAPI-002",
+        "REQ-SHOPIFYAPI-003",
+        "REQ-SHOPIFYAPI-004",
+    ]:
+        assert requirement_id in api_spec
+
+    for requirement_id in [
+        "REQ-DATA-001",
+        "REQ-DATA-002",
+        "REQ-DATA-003",
+        "REQ-DATA-004",
+    ]:
+        assert requirement_id in data_spec
+
+    assert "productSet" in api_spec
+    assert "inventoryItemUpdate" in api_spec
+    assert "inventorySetQuantities" in api_spec
+    assert "orderCancel" in api_spec
+    assert "fulfillmentCreate" in model_source
+    assert "not_published" in data_spec
+    assert "validated" in data_spec
+    assert "fulfilled" in data_spec
+    assert "success" in data_spec

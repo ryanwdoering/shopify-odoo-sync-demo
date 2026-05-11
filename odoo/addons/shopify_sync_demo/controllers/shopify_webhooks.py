@@ -3,6 +3,8 @@
 Shopify webhook verification must be performed against the raw HTTP request
 body. The controller keeps that responsibility at the edge and hands verified
 payloads to the same Odoo model workflow used by manual order pulls.
+
+SpecOps evidence: REQ-ORDER-001.
 """
 
 import base64

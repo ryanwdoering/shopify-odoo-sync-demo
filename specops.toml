@@ -1,0 +1,58 @@
+[paths]
+specs = ["specs/**/*.md"]
+code = [
+  "README.md",
+  "Guide.md",
+  "docs/**/*.md",
+  "Makefile",
+  "docker-compose.yml",
+  "pyproject.toml",
+  "requirements-dev.txt",
+  "odoo/README.md",
+  "odoo/odoo.conf",
+  "odoo/addons/**/*.py",
+  "odoo/addons/**/*.xml",
+  "odoo/addons/**/*.csv",
+  "odoo/addons/**/*.md",
+]
+tests = [
+  "tests/**/*.py",
+  "tests/**/*.md",
+  "odoo/addons/**/tests/**/*.py",
+]
+ignore = [
+  ".git/**",
+  ".venv/**",
+  "venv/**",
+  "node_modules/**",
+  "__pycache__/**",
+  ".pytest_cache/**",
+  ".ruff_cache/**",
+  "*.egg-info/**",
+  "build/**",
+  "dist/**",
+]
+
+[components]
+
+[components.repo_operations]
+type = "maintenance"
+description = "Repository-level maintenance commands, static contracts, and SpecOps traceability."
+paths = ["Makefile", "tests", "specs"]
+entrypoints = ["Makefile"]
+interfaces = ["codex-specops audit", "pytest"]
+
+[components.shopify_sync_demo]
+type = "odoo_module"
+description = "Native Odoo Shopify Sync module and operator workflow."
+paths = ["odoo/addons/shopify_sync_demo"]
+entrypoints = [
+  "odoo/addons/shopify_sync_demo/__manifest__.py",
+  "odoo/addons/shopify_sync_demo/controllers/shopify_webhooks.py",
+  "odoo/addons/shopify_sync_demo/models/shopify_sync.py",
+]
+interfaces = [
+  "Shopify Admin GraphQL",
+  "Shopify orders/create webhook",
+  "Odoo scheduled action",
+]

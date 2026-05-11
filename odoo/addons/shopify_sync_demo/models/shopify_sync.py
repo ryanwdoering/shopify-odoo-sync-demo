@@ -3,6 +3,11 @@
 The module keeps the integration inside Odoo: catalog publishing, inventory
 projection, Shopify order intake, line validation, paid-order automation, and
 fulfillment all live as Odoo models and actions.
+
+SpecOps evidence: REQ-ODOO-001, REQ-CATALOG-001, REQ-ORDER-001,
+REQ-REFUND-001, REQ-AUTO-001, REQ-FULFILL-001, REQ-SHOPIFYAPI-001,
+REQ-SHOPIFYAPI-002, REQ-SHOPIFYAPI-003, REQ-SHOPIFYAPI-004,
+REQ-DATA-001, REQ-DATA-002, REQ-DATA-003, REQ-DATA-004.
 """
 
 import hashlib

@@ -1,4 +1,4 @@
-.PHONY: up logs test-static test-odoo validate upgrade clean-init
+.PHONY: up logs specops test-static test-odoo validate upgrade clean-init
 
 DB ?= shopify_odoo_demo
 
@@ -8,7 +8,16 @@ up:
 logs:
 	docker compose logs odoo --tail=100
 
+# REQ-MAINT-001: keep SpecOps available as a first-class maintenance check.
+specops:
+	@if [ -x .venv/bin/codex-specops ]; then \
+		.venv/bin/codex-specops audit; \
+	else \
+		codex-specops audit; \
+	fi
+
 validate:
+	$(MAKE) specops
 	xmllint --noout \
 		odoo/addons/shopify_sync_demo/views/shopify_sync_views.xml \
 		odoo/addons/shopify_sync_demo/data/ir_cron.xml
